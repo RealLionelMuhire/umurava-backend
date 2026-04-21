@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 
-// This is the mocked implementation
-export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  (req as any).recruiterId = 'mock_recruiter_id';
-  next();
-};
+// This is the mocked implementation, wrapped in the global jest.fn()
+export const authMiddleware = jest.fn(
+  (req: Request, res: Response, next: NextFunction) => {
+    // Default mock behavior: attach a mock recruiterId and proceed
+    (req as any).recruiterId = 'mock_recruiter_id';
+    next();
+  }
+);

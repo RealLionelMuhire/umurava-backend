@@ -1,27 +1,42 @@
 import request from 'supertest';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import jobRoutes from '../routes/jobs';
 import { Job } from '../models/Job';
 import jwt from 'jsonwebtoken';
+import { authMiddleware } from '../middleware/auth';
+import mongoose from 'mongoose';
 
-// Automatically mock the auth middleware
+// 1. Mock the middleware. This is hoisted to the top by Jest.
 jest.mock('../middleware/auth');
 
 const app = express();
 app.use(express.json());
+// Use the actual router
 app.use('/api/jobs', jobRoutes);
+
+// 2. Cast the imported authMiddleware directly. It is now a mock.
+const mockedAuthMiddleware = authMiddleware as jest.Mock;
 
 let token: string;
 
-beforeAll(() => {
-  // We still generate a token to send in headers, as a good practice
-  token = jwt.sign({ id: 'test_recruiter_id' }, process.env.JWT_SECRET || 'secret');
-});
-
 describe('Job Endpoints', () => {
+  beforeAll(() => {
+    token = jwt.sign({ id: 'test_recruiter_id' }, process.env.JWT_SECRET || 'secret');
+  });
+
+  // 3. Reset the mock and clear the DB before each test
+  beforeEach(async () => {
+    await Job.deleteMany({});
+    // Reset the mock to its default "success" implementation
+    mockedAuthMiddleware.mockClear();
+    mockedAuthMiddleware.mockImplementation((req: Request, res: Response, next: NextFunction) => {
+      (req as any).recruiterId = new mongoose.Types.ObjectId().toHexString();
+      next();
+    });
+  });
+
   it('should get all jobs', async () => {
-    await Job.create({ title: 'Job 1', description: 'Desc 1' });
-    await Job.create({ title: 'Job 2', description: 'Desc 2' });
+    await Job.create([{ title: 'Job 1', description: 'Desc 1' }, { title: 'Job 2', description: 'Desc 2' }]);
 
     const res = await request(app).get('/api/jobs');
     expect(res.statusCode).toEqual(200);
@@ -67,18 +82,22 @@ describe('Job Endpoints', () => {
     expect(res.body).toHaveProperty('message', 'Job deleted successfully');
   });
 
-  it('should return 401 if no token is provided', async () => {
-    const { authMiddleware } = require('../middleware/auth');
-    authMiddleware.mockImplementationOnce((req: Request, res: Response, next: Function) => {
-      // Simulate what the real middleware does
+  // 4. The corrected test for the 401 error
+  it('should return 401 if no token is provided for a protected route', async () => {
+    // Change the implementation just for this test
+    mockedAuthMiddleware.mockImplementationOnce((req: Request, res: Response, next: NextFunction) => {
+      // Simulate what the actual middleware does when there's no token
+      // It doesn't call next(), it just sends a response.
       res.status(401).json({ message: 'No token, authorization denied' });
     });
 
     const res = await request(app)
-      .post('/api/jobs')
+      .post('/api/jobs') // A protected route that requires auth
       .send({ title: 'test', description: 'test' });
     
+    // Assert that the server responded with 401
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe('No token, authorization denied');
   });
 });
+
