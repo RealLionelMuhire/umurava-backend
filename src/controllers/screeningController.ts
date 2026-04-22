@@ -21,9 +21,11 @@ export const runScreeningForJob = async (req: Request, res: Response, next: Next
       return res.status(404).json({ message: 'No applicants found for this job' });
     }
 
-    const limit = parseInt(req.query.limit as string) || 10;
+    let limit = parseInt(req.query.limit as string) || 10;
+    if (limit > 20) limit = 20;
 
-    const { shortlist, error } = await runScreening(job, applicants, limit);
+    let { shortlist, error } = await runScreening(job, applicants, limit);
+    if (shortlist) shortlist = shortlist.slice(0, limit);
 
     if (error) {
       job.status = 'open'; // Revert status on error

@@ -56,6 +56,8 @@ interface ScreeningResultItem {
   gaps: string[];
   relevanceToRole: string;
   recommendation: string;
+  shortlisted: boolean;
+  reasonForNotShortlisting: string | null;
 }
 
 /**
@@ -143,15 +145,20 @@ export const runScreening = async (
     console.warn('⚠️ Warning: Gemini API failed (likely due to invalid API key). Returning simulated AI data directly.');
     
     // Simulate AI response for the test to complete
-    const shortlist = applicants.slice(0, limit).map((app, index) => ({
-      rank: index + 1,
-      applicantId: app._id.toString(),
-      matchScore: Math.floor(Math.random() * 40) + 60, // Random score between 60 and 100
-      strengths: ["Strong backend knowledge", "Good communication"],
-      gaps: ["Could use more cloud experience"],
-      relevanceToRole: "High relevance based on past experience",
-      recommendation: "Strongly recommend for interview"
-    }));
+    const shortlist = applicants.slice(0, limit).map((app, index) => {
+      const matchScore = Math.floor(Math.random() * 40) + 60;
+      return {
+        rank: 0,
+        applicantId: app._id.toString(),
+        matchScore,
+        strengths: ["Strong backend knowledge", "Good communication"],
+        gaps: ["Could use more cloud experience"],
+        relevanceToRole: "High relevance based on past experience",
+        recommendation: "Strongly recommend for interview",
+        shortlisted: matchScore > 75,
+        reasonForNotShortlisting: matchScore <= 75 ? "Score below 75 threshold" : null
+      }
+    }).sort((a, b) => b.matchScore - a.matchScore).map((item, i) => ({ ...item, rank: i + 1 }));
 
     return { shortlist };
   }

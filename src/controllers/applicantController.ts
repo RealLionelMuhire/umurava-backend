@@ -91,3 +91,45 @@ export const getApplicantsByJob = async (req: Request, res: Response, next: Next
     next(error);
   }
 };
+
+export const uploadCsv = async (req: Request, res: Response, next: NextFunction) => {
+  const { jobId } = req.body;
+  if (!req.file || !jobId) {
+    return res.status(400).json({ message: 'File and jobId are required' });
+  }
+
+  try {
+    const xlsx = require('xlsx');
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const applicantsJson = xlsx.utils.sheet_to_json(worksheet) as any[];
+
+    const processedApplicants = applicantsJson.map(data => ({
+      ...data,
+      jobId,
+      source: 'external',
+      rawResumeText: data.skills ? data.skills : 'CSV Import' // mock raw text
+    }));
+
+    await Applicant.insertMany(processedApplicants);
+    res.status(201).json({ message: 'Applicants from CSV uploaded successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createStructuredApplicant = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const newApplicant = new Applicant({
+      ...req.body,
+      source: 'umurava_platform',
+      status: 'applied',
+      rawResumeText: req.body.skills ? req.body.skills.join(', ') + ' experience: ' + req.body.experienceYears : 'Structured Profile'
+    });
+    await newApplicant.save();
+    res.status(201).json(newApplicant);
+  } catch (error) {
+    next(error);
+  }
+};

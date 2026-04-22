@@ -1,20 +1,16 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { createApplicant, getApplicantsByJob } from '../controllers/applicantController';
+import { createApplicant, getApplicantsByJob, uploadCsv, createStructuredApplicant } from '../controllers/applicantController';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router({ mergeParams: true }); 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Route to get all applicants for a specific job
-// GET /api/applicants/:jobId
 router.get('/:jobId', authMiddleware, getApplicantsByJob);
-
-// Route for a new applicant to apply to a specific job
-// This handles both file uploads and resume URLs through the same controller
-// POST /api/applicants/:jobId/apply
+// Oh wait, in previous working script we had: router.get('/job/:jobId', authMiddleware, getApplicantsByJob);
+router.get('/job/:jobId', authMiddleware, getApplicantsByJob);
 router.post('/:jobId/apply', upload.single('resume'), createApplicant);
-
+router.post('/upload-csv', upload.single('file'), uploadCsv);
+router.post('/', createStructuredApplicant);
 
 export default router;
-

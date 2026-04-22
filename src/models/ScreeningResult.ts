@@ -7,6 +7,8 @@ interface IShortlistItem {
   strengths: string[];
   gaps: string[];
   recommendation: string;
+  shortlisted: boolean;
+  reasonForNotShortlisting?: string;
 }
 
 export interface IScreeningResult extends Document {
@@ -25,6 +27,8 @@ const ScreeningResultSchema = new Schema<IScreeningResult>({
       strengths: [{ type: String }],
       gaps: [{ type: String }],
       recommendation: { type: String },
+      shortlisted: { type: Boolean, default: false },
+      reasonForNotShortlisting: { type: String },
     },
   ],
   createdAt: { type: Date, default: Date.now },
