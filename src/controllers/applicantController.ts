@@ -7,8 +7,21 @@ import { z } from 'zod';
 
 // Zod schema for validating the application input
 const applicantSchema = z.object({
-  fullName: z.string().min(1, 'Full name is required'),
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
   email: z.string().email('Invalid email address'),
+  headline: z.string().min(1, 'Headline is required'),
+  location: z.string().min(1, 'Location is required'),
+  skills: z.array(z.any()).min(1, 'At least one skill is required'),
+  experience: z.array(z.any()).min(1, 'At least one experience entry is required'),
+  education: z.array(z.any()).min(1, 'At least one education entry is required'),
+  projects: z.array(z.any()).min(1, 'At least one project is required'),
+  availability: z.any(),
+  // optional fields
+  bio: z.string().optional(),
+  languages: z.array(z.any()).optional(),
+  certifications: z.array(z.any()).optional(),
+  socialLinks: z.any().optional(),
   resumeUrl: z.string().url('Invalid resume URL').optional(),
 });
 
@@ -25,7 +38,7 @@ export const createApplicant = async (req: Request, res: Response, next: NextFun
       return res.status(400).json({ message: 'Invalid input', errors: validation.error.format() });
     }
 
-    const { fullName, email, resumeUrl } = validation.data;
+    const { firstName, lastName, headline, location, skills, experience, education, projects, availability, email, resumeUrl, bio, languages, certifications, socialLinks } = validation.data;
 
     const job = await Job.findById(jobId);
     if (!job) {
@@ -57,8 +70,20 @@ export const createApplicant = async (req: Request, res: Response, next: NextFun
     }
 
     const newApplicant = new Applicant({
-      fullName,
+      firstName,
+      lastName,
       email,
+      headline,
+      location,
+      skills,
+      experience,
+      education,
+      projects,
+      availability,
+      bio,
+      languages,
+      certifications,
+      socialLinks,
       jobId,
       rawResumeText,
       resumeUrl: req.file ? `uploads/${req.file.originalname}` : resumeUrl,
@@ -125,7 +150,7 @@ export const createStructuredApplicant = async (req: Request, res: Response, nex
       ...req.body,
       source: 'umurava_platform',
       status: 'applied',
-      rawResumeText: req.body.skills ? req.body.skills.join(', ') + ' experience: ' + req.body.experienceYears : 'Structured Profile'
+      rawResumeText: req.body.skills ? JSON.stringify(req.body.skills) : 'Structured Profile'
     });
     await newApplicant.save();
     res.status(201).json(newApplicant);

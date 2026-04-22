@@ -1,3 +1,5 @@
+const fs = require('fs');
+const applicantModelCode = `
 import { Schema, model, Document, Types } from 'mongoose';
 
 export interface ISkill {
@@ -155,3 +157,62 @@ const ApplicantSchema = new Schema<IApplicant>({
 });
 
 export const Applicant = model<IApplicant>('Applicant', ApplicantSchema);
+`;
+fs.writeFileSync('src/models/Applicant.ts', applicantModelCode);
+
+let geminiCode = fs.readFileSync('src/services/ai/geminiService.ts', 'utf8');
+geminiCode = geminiCode.replace(
+  /\`\s+\*\*Applicant Profile:\*\*[\s\S]*?\`\)\.join\(\'\'\);/,
+  \`\`
+    **Applicant Profile:**
+    - ID: \${applicant._id}
+    - Name: \${applicant.firstName} \${applicant.lastName}
+    - Headline: \${applicant.headline}
+    - Location: \${applicant.location}
+    - Skills: \${applicant.skills?.map(s => \`\${s.name} (\${s.level}, \${s.yearsOfExperience} yrs)\`).join(', ') || ''}
+    - Experience: \${applicant.experience?.map(e => \`Role: \${e.role} at \${e.company}. Tech: \${e.technologies?.join(', ')}. Desc: \${e.description}\`).join(' | ') || ''}
+    - Education: \${applicant.education?.map(ed => \`\${ed.degree} in \${ed.fieldOfStudy} at \${ed.institution}\`).join(' | ') || ''}
+    - Certifications: \${applicant.certifications?.map(c => \`\${c.name} from \${c.issuer}\`).join(', ') || 'None'}
+    - Projects Tech: \${applicant.projects?.map(p => \`\${p.name}: \${p.technologies?.join(', ')}\`).join(' | ') || 'None'}
+    - Raw Resume Text Fallback: \${applicant.rawResumeText ? applicant.rawResumeText.substring(0, 1000) + '...' : 'N/A'}
+  \`).join('');\`
+);
+fs.writeFileSync('src/services/ai/geminiService.ts', geminiCode);
+
+let controllerCode = fs.readFileSync('src/controllers/applicantController.ts', 'utf8');
+const newZodSchema = \`// Zod schema for validating the application input
+const applicantSchema = z.object({
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
+  email: z.string().email('Invalid email address'),
+  headline: z.string().min(1, 'Headline is required'),
+  location: z.string().min(1, 'Location is required'),
+  skills: z.array(z.any()).min(1, 'At least one skill is required'),
+  experience: z.array(z.any()).min(1, 'At least one experience entry is required'),
+  education: z.array(z.any()).min(1, 'At least one education entry is required'),
+  projects: z.array(z.any()).min(1, 'At least one project is required'),
+  availability: z.any({ required_error: "Availability is required" }),
+  resumeUrl: z.string().url('Invalid resume URL').optional(),
+  bio: z.string().optional(),
+  languages: z.array(z.any()).optional(),
+  certifications: z.array(z.any()).optional(),
+  socialLinks: z.any().optional(),
+});\`;
+
+controllerCode = controllerCode.replace(
+  /\/\/ Zod schema for validating the application input[\s\S]*?\}\);/,
+  newZodSchema
+);
+
+controllerCode = controllerCode.replace(
+  /const { fullName, email, resumeUrl } = validation.data;/,
+  \`const { firstName, lastName, headline, location, skills, experience, education, projects, availability, email, resumeUrl, bio, languages, certifications, socialLinks } = validation.data;\`
+);
+
+controllerCode = controllerCode.replace(
+  /fullName,\s*email,/,
+  \`firstName,\\n      lastName,\\n      headline,\\n      location,\\n      skills,\\n      experience,\\n      education,\\n      projects,\\n      availability,\\n      bio,\\n      languages,\\n      certifications,\\n      socialLinks,\\n      email,\`
+);
+
+fs.writeFileSync('src/controllers/applicantController.ts', controllerCode);
+console.log('Patched');

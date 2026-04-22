@@ -1,4 +1,5 @@
-import { Schema, model, Document, Types } from 'mongoose';
+const fs = require('fs');
+fs.writeFileSync('src/models/Applicant.ts', `import { Schema, model, Document, Types } from 'mongoose';
 
 export interface ISkill {
   name: string;
@@ -155,3 +156,5 @@ const ApplicantSchema = new Schema<IApplicant>({
 });
 
 export const Applicant = model<IApplicant>('Applicant', ApplicantSchema);
+`);
+console.log('Applicant.ts rewritten.');

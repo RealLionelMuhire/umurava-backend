@@ -80,11 +80,15 @@ export const buildScreeningPrompt = (job: IJob, applicants: IApplicant[], limit:
   const applicantProfiles = applicants.map(applicant => `
     **Applicant Profile:**
     - ID: ${applicant._id}
-    - Name: ${applicant.fullName}
-    - Skills: ${applicant.skills.join(', ')}
-    - Experience: ${applicant.experienceYears} years
-    - Education: ${applicant.education}
-    - Raw Resume Summary: ${applicant.rawResumeText.substring(0, 500)}...
+    - Name: ${applicant.firstName} ${applicant.lastName}
+    - Headline: ${applicant.headline}
+    - Location: ${applicant.location}
+    - Skills: ${applicant.skills?.map(s => `${s.name} (${s.level}, ${s.yearsOfExperience}y)`).join('; ') || ''}
+    - Experience: ${applicant.experience?.map(e => `${e.role} at ${e.company} (${e.startDate} to ${e.endDate}). Description: ${e.description}. Tech: ${e.technologies?.join(', ') || ''}`).join(' | ') || ''}
+    - Education: ${applicant.education?.map(edu => `${edu.degree} in ${edu.fieldOfStudy} at ${edu.institution} (${edu.startYear}-${edu.endYear})`).join(' | ') || ''}
+    - Certifications: ${applicant.certifications?.map(c => `${c.name} by ${c.issuer}`).join(' | ') || 'None'}
+    - Projects (Tech): ${applicant.projects?.map(p => `${p.name} - ${p.technologies?.join(', ') || ''}`).join(' | ') || 'None'}
+    - Raw Resume Fallback: ${applicant.rawResumeText ? applicant.rawResumeText.substring(0, 500) + '...' : 'N/A'}
   `).join('');
 
   const instructions = `
