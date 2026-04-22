@@ -7,20 +7,22 @@
 const axios = require('axios');
 
 // --- CONFIGURATION ---
-const API_BASE_URL = 'https://umurava-backend-production.up.railway.app';
+const API_BASE_URL = 'http://localhost:5000';
+
+const VALID_DUMMY_URL = "https://raw.githubusercontent.com/nodesource/distributions/master/README.md";
 
 // A pool of diverse, realistic resume URLs for simulating different candidates
 const CANDIDATE_RESUMES = [
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/senior-backend-resume.md", // Strong candidate
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/data-scientist-resume.md", // Good, but different field
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/junior-frontend-resume.md", // Junior, wrong specialty
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/product-manager-resume.md", // Non-technical
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/full-stack-resume.md", // Good full-stack candidate
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/devops-resume.md", // Related, but different focus
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/lead-engineer-resume.md", // Very strong candidate
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/mobile-dev-resume.md", // Mobile developer
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/qa-engineer-resume.md", // QA Engineer
-    "https://gist.githubusercontent.com/LeoTico/f78c1d22c181e5e5b658e91c151039e3/raw/e7c33c59b8aa450025a11957a45a1c1e23e88d03/ux-designer-resume.md" // Designer
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL,
+    VALID_DUMMY_URL
 ];
 
 // --- HELPER FUNCTIONS ---
@@ -77,7 +79,7 @@ async function runFullWorkflow() {
 
             try {
                 const applyRes = await axios.post(`${API_BASE_URL}/api/applicants/${jobId}/apply`, {
-                    name: applicantName,
+                    fullName: applicantName,
                     email: applicantEmail,
                     resumeUrl: resumeUrl
                 });
@@ -91,47 +93,44 @@ async function runFullWorkflow() {
         }
 
         // --- 4. SCREEN APPLICANTS ---
-        log(`STEP 4: Screening all ${applicantIds.length} Applicants`);
-        for (const applicantId of applicantIds) {
-            try {
-                await axios.post(`${API_BASE_URL}/api/screening/${jobId}/${applicantId}`, {}, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-                logSuccess(`Screening initiated for applicant ${applicantId}`);
-            } catch (screenError) {
-                console.warn(`⚠️  Warning: Could not screen applicant ${applicantId}.`);
-                logError(screenError);
-            }
-            await sleep(2000); // Add a longer delay for AI processing
+        log(`STEP 4: Screening Applicants for Job`);
+        try {
+            await axios.post(`${API_BASE_URL}/api/screening/${jobId}`, {}, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            logSuccess(`Screening initiated for all applicants for job ${jobId}`);
+        } catch (screenError) {
+            console.warn(`⚠️  Warning: Could not initiate screening.`);
+            logError(screenError);
         }
-        logSuccess('All screening processes initiated. Waiting for results...');
+        logSuccess('Screening process initiated. Waiting for results...');
         await sleep(10000); // Wait a bit longer for all AI jobs to complete
 
         // --- 5. GET AND RANK CANDIDATES ---
-        log('STEP 5: Fetching Results and Ranking Top 10 Candidates');
-        const resultsRes = await axios.get(`${API_BASE_URL}/api/applicants/${jobId}`, {
+        log('STEP 5: Fetching Results and Ranking Top Candidates');
+        // Fetch screening results which includes the applicants and their scores
+        const resultsRes = await axios.get(`${API_BASE_URL}/api/screening/${jobId}`, {
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        const allApplicants = resultsRes.data;
-
-        const screenedApplicants = allApplicants.filter(app => app.screeningReport && app.screeningReport.compatibilityScore);
+        const screenedApplicants = resultsRes.data.shortlist || [];
 
         if (screenedApplicants.length === 0) {
-            logSuccess("No applicants were successfully screened. The AI may be processing or there were errors during screening.");
+            logSuccess("No applicants were successfully screened.");
             return;
         }
-
-        screenedApplicants.sort((a, b) => b.screeningReport.compatibilityScore - a.screeningReport.compatibilityScore);
 
         console.log('\n\n==================================================');
         console.log('🏆 TOP CANDIDATES REPORT 🏆');
         console.log('==================================================\n');
 
-        screenedApplicants.slice(0, 10).forEach((app, index) => {
-            console.log(`\n#${index + 1} - ${app.name} (Score: ${app.screeningReport.compatibilityScore})`);
+        screenedApplicants.slice(0, 10).forEach((result, index) => {
+            // Mapping the properties based on the actual ScreeningResult model structure
+            console.log(`\n#${index + 1} - Applicant ID: ${result.applicantId} (Score: ${result.matchScore || 'N/A'})`);
             console.log('--------------------------------------------------');
-            console.log(`AI-Generated Reason: ${app.screeningReport.reasoning}`);
-            console.log(`Matched Skills: ${app.screeningReport.matchedSkills.join(', ')}`);
+            console.log(`AI-Generated Reason: ${result.recommendation || 'N/A'}`);
+            if (result.strengths && result.strengths.length > 0) {
+                console.log(`Strengths: ${result.strengths.join(', ')}`);
+            }
         });
 
         log('Full workflow test completed successfully!');

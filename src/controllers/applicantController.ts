@@ -1,118 +1,93 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { Applicant } from '../models/Applicant';
-import xlsx from 'xlsx';
+import { Job } from '../models/Job';
 import pdf from 'pdf-parse';
 import axios from 'axios';
+import { z } from 'zod';
 
-export const uploadCsv = async (req: Request, res: Response) => {
-  const { jobId } = req.body;
-  if (!req.file || !jobId) {
-    return res.status(400).json({ message: 'File and jobId are required' });
-  }
+// Zod schema for validating the application input
+const applicantSchema = z.object({
+  fullName: z.string().min(1, 'Full name is required'),
+  email: z.string().email('Invalid email address'),
+  resumeUrl: z.string().url('Invalid resume URL').optional(),
+});
 
+/**
+ * Handles the creation of a new applicant for a specific job.
+ * It can accept a resume via file upload or a URL.
+ */
+export const createApplicant = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const applicantsJson = xlsx.utils.sheet_to_json(worksheet) as any[];
+    const { jobId } = req.params;
+    const validation = applicantSchema.safeParse(req.body);
 
-    const applicants = applicantsJson.map(data => ({
-      ...data,
-      jobId,
-      source: 'external',
-    }));
-
-    await Applicant.insertMany(applicants);
-    res.status(201).json({ message: 'Applicants from CSV uploaded successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
-  }
-};
-
-export const uploadResume = async (req: Request, res: Response) => {
-  const { jobId, fullName, email } = req.body;
-  if (!req.file || !jobId || !fullName || !email) {
-    return res.status(400).json({ message: 'File, jobId, fullName, and email are required' });
-  }
-
-  try {
-    const data = await pdf(req.file.buffer);
-    const newApplicant = new Applicant({
-      fullName,
-      email,
-      jobId,
-      rawResumeText: data.text,
-      resumeUrl: `uploads/resumes/${req.file.filename}`,
-      source: 'external',
-    });
-    await newApplicant.save();
-    res.status(201).json(newApplicant);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
-  }
-};
-
-export const uploadResumeLink = async (req: Request, res: Response) => {
-  const { resumeUrl, fullName, email, jobId } = req.body;
-
-  if (!resumeUrl || !fullName || !email || !jobId) {
-    return res.status(400).json({ message: 'resumeUrl, fullName, email, and jobId are required' });
-  }
-
-  try {
-    const response = await axios.get(resumeUrl, {
-      responseType: 'arraybuffer',
-      timeout: 10000, // 10 second timeout
-    });
-
-    if (response.headers['content-type'] !== 'application/pdf') {
-      return res.status(400).json({ message: 'URL does not point to a PDF file.' });
+    if (!validation.success) {
+      return res.status(400).json({ message: 'Invalid input', errors: validation.error.format() });
     }
 
-    const data = await pdf(response.data);
+    const { fullName, email, resumeUrl } = validation.data;
+
+    const job = await Job.findById(jobId);
+    if (!job) {
+      return res.status(404).json({ message: 'Job not found' });
+    }
+
+    let rawResumeText = '';
+
+    // Case 1: Resume is provided as a file upload
+    if (req.file) {
+      const data = await pdf(req.file.buffer);
+      rawResumeText = data.text;
+    } 
+    // Case 2: Resume is provided as a URL
+    else if (resumeUrl) {
+      const response = await axios.get(resumeUrl, { responseType: 'arraybuffer' });
+      // Check if the response is a PDF before parsing
+      if (response.headers['content-type'] === 'application/pdf') {
+        const data = await pdf(response.data);
+        rawResumeText = data.text;
+      } else {
+        // If it's not a PDF (e.g., a markdown file from gist), treat it as plain text
+        rawResumeText = Buffer.from(response.data).toString('utf-8');
+      }
+    } 
+    // Case 3: No resume provided
+    else {
+      return res.status(400).json({ message: 'Either a resume file or a resumeUrl is required.' });
+    }
 
     const newApplicant = new Applicant({
       fullName,
       email,
       jobId,
-      rawResumeText: data.text,
-      resumeUrl,
+      rawResumeText,
+      resumeUrl: req.file ? `uploads/${req.file.originalname}` : resumeUrl,
       source: 'external',
+      status: 'applied',
     });
 
     await newApplicant.save();
-    res.status(201).json(newApplicant);
+
+    res.status(201).json({ message: 'Application submitted successfully', applicant: newApplicant });
+
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      return res.status(500).json({ message: 'Failed to fetch the resume from the URL.', details: error.message });
-    }
-    res.status(500).json({ message: 'Server error while processing resume link.', error });
+    console.error('Error in createApplicant:', error);
+    next(error);
   }
 };
 
-export const createApplicant = async (req: Request, res: Response) => {
+/**
+ * Retrieves all applicants associated with a specific job.
+ */
+export const getApplicantsByJob = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const newApplicant = new Applicant({
-      ...req.body,
-      source: 'umurava_platform',
-    });
-    await newApplicant.save();
-    res.status(201).json(newApplicant);
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
-  }
-};
-
-export const getApplicantsByJob = async (req: Request, res: Response) => {
-  const { jobId } = req.query;
-  if (!jobId) {
-    return res.status(400).json({ message: 'jobId is required' });
-  }
-
-  try {
+    const { jobId } = req.params;
     const applicants = await Applicant.find({ jobId });
-    res.json(applicants);
+    if (!applicants) {
+      return res.status(404).json({ message: 'No applicants found for this job' });
+    }
+    res.status(200).json(applicants);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+    next(error);
   }
 };
