@@ -54,19 +54,41 @@ Logs in a recruiter and returns a JWT.
 
 ### `GET /api/jobs` 🌐 Public
 
-Retrieves a list of all job postings.
+Retrieves a paginated, searchable, filterable list of job postings.
+
+-   **Query Parameters**:
+
+    | Parameter | Type | Default | Description |
+    |---|---|---|---|
+    | `page` | number | `1` | Page number |
+    | `limit` | number | `10` | Results per page |
+    | `search` | string | — | Case-insensitive keyword search across `title`, `description`, and `requiredSkills` |
+    | `status` | string | — | Filter by job status: `open` \| `screening` \| `shortlisted` |
+    | `experienceLevel` | string | — | Filter by experience level (e.g. `junior`, `mid`, `senior`) |
+    | `location` | string | — | Filter by location (partial match, e.g. `Kigali`) |
+
+-   **Example**: `GET /api/jobs?page=1&limit=10&search=backend&status=open&location=Kigali`
 
 -   **Response (200 OK)**:
     ```json
-    [
-      {
-        "_id": "60d5f1b4e6b3f1a2c8a4b8b1",
-        "title": "Senior Software Engineer",
-        "description": "...",
-        "status": "open",
-        "createdAt": "2023-01-01T00:00:00.000Z"
-      }
-    ]
+    {
+      "jobs": [
+        {
+          "_id": "60d5f1b4e6b3f1a2c8a4b8b1",
+          "title": "Senior Backend Engineer",
+          "description": "...",
+          "status": "open",
+          "experienceLevel": "senior",
+          "location": "Kigali, Rwanda",
+          "createdAt": "2023-01-01T00:00:00.000Z"
+        }
+      ],
+      "totalJobs": 100,
+      "totalPages": 10,
+      "currentPage": 1,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
     ```
 
 ### `GET /api/jobs/:id` 🌐 Public
