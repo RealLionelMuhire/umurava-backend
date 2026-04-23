@@ -12,7 +12,7 @@ This document provides a detailed overview of the Umurava backend API endpoints.
 
 ## 1. Authentication (`/api/auth`)
 
-### `POST /api/auth/register`
+### `POST /api/auth/register` 🌐 Public
 
 Registers a new recruiter account.
 
@@ -30,7 +30,7 @@ Registers a new recruiter account.
     }
     ```
 
-### `POST /api/auth/login`
+### `POST /api/auth/login` 🌐 Public
 
 Logs in a recruiter and returns a JWT.
 
@@ -52,7 +52,7 @@ Logs in a recruiter and returns a JWT.
 
 ## 2. Jobs (`/api/jobs`)
 
-### `GET /api/jobs`
+### `GET /api/jobs` 🌐 Public
 
 Retrieves a list of all job postings.
 
@@ -69,7 +69,7 @@ Retrieves a list of all job postings.
     ]
     ```
 
-### `GET /api/jobs/:id`
+### `GET /api/jobs/:id` 🌐 Public
 
 Retrieves a single job posting by its ID.
 
@@ -122,7 +122,7 @@ Deletes a job posting.
 
 ## 3. Applicants (`/api/applicants`)
 
-### `POST /api/applicants/upload-csv`
+### `POST /api/applicants/upload-csv` 🌐 Public
 
 Uploads a batch of applicants from a CSV or Excel file.
 
@@ -137,7 +137,7 @@ Uploads a batch of applicants from a CSV or Excel file.
     }
     ```
 
-### `POST /api/applicants/upload-resume`
+### `POST /api/applicants/upload-resume` 🌐 Public
 
 Uploads a single applicant from a PDF resume file.
 
@@ -149,7 +149,7 @@ Uploads a single applicant from a PDF resume file.
     -   `email`: The applicant's email.
 -   **Response (201 Created)**: Returns the newly created applicant object.
 
-### `POST /api/applicants/upload-resume-link`
+### `POST /api/applicants/upload-resume-link` 🌐 Public
 
 Uploads a single applicant from a public PDF resume URL.
 
@@ -164,31 +164,78 @@ Uploads a single applicant from a public PDF resume URL.
     ```
 -   **Response (201 Created)**: Returns the newly created applicant object.
 
-### `POST /api/applicants`
+### `POST /api/applicants` 🌐 Public
 
-Creates a single applicant from a structured JSON object (e.g., from the Umurava platform).
+Creates a single applicant from a structured JSON object using the full Umurava Talent Profile Schema.
 
 -   **Request Body**:
     ```json
     {
-      "fullName": "John Smith",
-      "email": "john.smith@example.com",
-      "skills": ["Node.js", "MongoDB"],
-      "experienceYears": 5,
-      "education": "Master's in Computer Science",
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "email": "jane.smith@example.com",
+      "headline": "Senior Backend Engineer",
+      "location": "Kigali, Rwanda",
+      "skills": [
+        { "name": "Node.js", "level": "Expert", "yearsOfExperience": 5 },
+        { "name": "PostgreSQL", "level": "Advanced", "yearsOfExperience": 4 }
+      ],
+      "experience": [
+        {
+          "company": "TechCorp",
+          "role": "Backend Developer",
+          "startDate": "2020-01-01",
+          "endDate": "2024-01-01",
+          "description": "Built scalable REST APIs.",
+          "technologies": ["Node.js", "AWS"],
+          "isCurrent": false
+        }
+      ],
+      "education": [
+        {
+          "institution": "University of Rwanda",
+          "degree": "BSc",
+          "fieldOfStudy": "Computer Science",
+          "startYear": 2016,
+          "endYear": 2020
+        }
+      ],
+      "projects": [
+        {
+          "name": "Payment Gateway",
+          "description": "High-throughput fintech API.",
+          "technologies": ["Node.js", "PostgreSQL"],
+          "role": "Lead Engineer",
+          "startDate": "2021-06-01",
+          "endDate": "2022-12-01"
+        }
+      ],
+      "availability": {
+        "status": "Available",
+        "type": "Full-time"
+      },
       "jobId": "60d5f1b4e6b3f1a2c8a4b8b1",
-      "profileData": { "umurava_profile_id": 123, "other_data": "..." }
+      "source": "umurava_platform"
     }
     ```
+    > **Valid enum values**
+    > - `availability.status`: `Available` | `Open to Opportunities` | `Not Available`
+    > - `availability.type`: `Full-time` | `Part-time` | `Contract`
+    > - `source`: `umurava_platform` | `external`
+    > - `skills[].level`: `Beginner` | `Intermediate` | `Advanced` | `Expert`
 -   **Response (201 Created)**: Returns the newly created applicant object.
 
-### `GET /api/applicants`
+### `GET /api/applicants` 🔒 Protected
 
-Retrieves all applicants for a specific job.
+Retrieves all applicants for a specific job. Supports both a query parameter and a path parameter.
 
--   **Query Parameters**:
+-   **Query Parameter (primary)**:
     -   `jobId` (required): The ID of the job.
--   **Example**: `/api/applicants?jobId=60d5f1b4e6b3f1a2c8a4b8b1`
+    -   **Example**: `GET /api/applicants?jobId=60d5f1b4e6b3f1a2c8a4b8b1`
+
+-   **Path Parameter (legacy)**:
+    -   **Example**: `GET /api/applicants/60d5f1b4e6b3f1a2c8a4b8b1`
+
 -   **Response (200 OK)**: An array of applicant objects.
 
 ---

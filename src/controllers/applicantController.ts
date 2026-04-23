@@ -106,7 +106,10 @@ export const createApplicant = async (req: Request, res: Response, next: NextFun
  */
 export const getApplicantsByJob = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { jobId } = req.params;
+    const jobId = (req.query.jobId as string) || req.params.jobId;
+    if (!jobId) {
+      return res.status(400).json({ message: 'jobId is required (provide as ?jobId= query param or /:jobId path param)' });
+    }
     const applicants = await Applicant.find({ jobId });
     if (!applicants) {
       return res.status(404).json({ message: 'No applicants found for this job' });
