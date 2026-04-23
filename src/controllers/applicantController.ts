@@ -51,7 +51,7 @@ export const createApplicant = async (req: Request, res: Response, next: NextFun
     if (req.file) {
       const data = await pdf(req.file.buffer);
       rawResumeText = data.text;
-    } 
+    }
     // Case 2: Resume is provided as a URL
     else if (resumeUrl) {
       const response = await axios.get(resumeUrl, { responseType: 'arraybuffer' });
@@ -63,7 +63,7 @@ export const createApplicant = async (req: Request, res: Response, next: NextFun
         // If it's not a PDF (e.g., a markdown file from gist), treat it as plain text
         rawResumeText = Buffer.from(response.data).toString('utf-8');
       }
-    } 
+    }
     // Case 3: No resume provided
     else {
       return res.status(400).json({ message: 'Either a resume file or a resumeUrl is required.' });
@@ -130,12 +130,31 @@ export const uploadCsv = async (req: Request, res: Response, next: NextFunction)
     const worksheet = workbook.Sheets[sheetName];
     const applicantsJson = xlsx.utils.sheet_to_json(worksheet) as any[];
 
-    const processedApplicants = applicantsJson.map(data => ({
-      ...data,
-      jobId,
-      source: 'external',
-      rawResumeText: data.skills ? data.skills : 'CSV Import' // mock raw text
-    }));
+    const processedApplicants = applicantsJson.map(data => {
+      const nameParts = (data.fullName || 'CSV Profile').split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ') || 'User';
+
+      const skillsArray = typeof data.skills === 'string'
+        ? data.skills.split(' ').map((s: string) => ({ name: s, level: 'Beginner', yearsOfExperience: data.experienceYears || 1 }))
+        : [];
+
+      return {
+        ...data,
+        firstName,
+        lastName,
+        headline: 'CSV Imported Candidate',
+        location: 'Remote',
+        skills: skillsArray.length > 0 ? skillsArray : [{ name: 'General', level: 'Beginner', yearsOfExperience: 1 }],
+        experience: [{ company: 'Unknown', role: 'Worker', startDate: '2020-01-01', endDate: '2023-01-01', description: 'Imported', technologies: [], isCurrent: false }],
+        education: [{ institution: 'Unknown', degree: 'Unknown', fieldOfStudy: 'Unknown', startYear: 2015, endYear: 2019 }],
+        projects: [{ name: 'Unknown', description: 'Imported', technologies: [], role: 'Worker', startDate: '2020-01-01', endDate: '2021-01-01' }],
+        availability: { status: 'Available', type: 'Full-time' },
+        jobId,
+        source: 'external',
+        rawResumeText: data.skills ? String(data.skills) : 'CSV Import' // mock raw text
+      };
+    });
 
     await Applicant.insertMany(processedApplicants);
     res.status(201).json({ message: 'Applicants from CSV uploaded successfully' });
