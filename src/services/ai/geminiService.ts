@@ -21,9 +21,6 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { IJob } from '../../models/Job';
 import { IApplicant } from '../../models/Applicant';
 
-// Initialize the Google Generative AI client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || 'MISSING_API_KEY');
-
 interface ScreeningResultItem {
   rank: number;
   applicantId: string;
@@ -198,15 +195,21 @@ export const runScreening = async (
   applicants: IApplicant[],
   limit: number
 ): Promise<{ shortlist: ScreeningResultItem[]; error?: string }> => {
-  if (!process.env.GEMINI_API_KEY) {
+  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'MISSING_API_KEY') {
     throw new Error('GEMINI_API_KEY is not configured.');
   }
+
+  console.log('--- DIAGNOSTIC GEMINI_API_KEY LOG ---');
+  console.log('Length:', process.env.GEMINI_API_KEY.length);
+  console.log('String: "' + process.env.GEMINI_API_KEY + '"');
+
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
   const prompt = buildScreeningPrompt(job, applicants, limit);
 
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction: "You are a strict, deterministic recruitment screening AI. You evaluate candidates ONLY against the specific job provided. You always follow the scoring rubric exactly. You never deviate from the rules. You always return valid JSON only."
     });
 
@@ -216,6 +219,7 @@ export const runScreening = async (
         temperature: 0.1,
         topP: 0.8,
         topK: 40,
+        maxOutputTokens: 8192,
         responseMimeType: "application/json"
       }
     });
@@ -223,7 +227,13 @@ export const runScreening = async (
     const text = response.text();
 
     try {
-      const parsed = JSON.parse(text);
+      let jsonString = text.trim();
+      if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7);
+      if (jsonString.startsWith('```')) jsonString = jsonString.slice(3);
+      if (jsonString.endsWith('```')) jsonString = jsonString.slice(0, -3);
+      jsonString = jsonString.trim();
+
+      const parsed = JSON.parse(jsonString);
       const raw = Array.isArray(parsed) ? parsed : [parsed];
       const mapped = raw.map(item => ({
         rank: item.rank,
@@ -238,12 +248,13 @@ export const runScreening = async (
         shortlisted: item.shortlisted,
         reasonForNotShortlisting: item.reasonForNotShortlisting || null
       }));
+
       const validatedList = validateScreeningResult(mapped);
       return { shortlist: validatedList.sort((a, b) => b.matchScore - a.matchScore).slice(0, limit).map((item, i) => ({ ...item, rank: i + 1 })) };
-    } catch (parseError) {
-      console.error('Failed to parse JSON response from Gemini API.');
-      console.error('Raw Response:', text);
-      throw new Error('Parse error');
+    } catch (parseError: any) {
+      console.error('❌ Parse error! Raw Response from Gemini:', text);
+      console.error('Inner Exception:', parseError.message);
+      throw new Error(`Parse error: ${parseError.message}`);
     }
   } catch (apiError: any) {
     console.error('❌ CRITICAL ERROR: Gemini API connection or generation failed.', apiError.message || apiError);
@@ -291,7 +302,8 @@ export const extractResumeData = async (rawText: string): Promise<any | null> =>
   `;
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); // Use flash for parsing
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }); // Use flash for parsing
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
