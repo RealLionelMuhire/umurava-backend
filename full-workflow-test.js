@@ -172,16 +172,22 @@ async function runHackathonScenarios() {
             }
         ];
 
-        for (let i = 0; i < 40; i++) {
-            const profile = job1Profiles[i % job1Profiles.length];
+        for (let i = 0; i < 80; i++) {
+            const profile = JSON.parse(JSON.stringify(job1Profiles[i % job1Profiles.length]));
+            profile.firstName = profile.firstName + `_Gen${i}`;
+            // Add some randomness to test AI hallucination explicitly
+            if (i % 4 === 0 && profile.skills.length > 0) profile.skills.pop(); // drop a skill
+            profile.skills.forEach(s => {
+                s.yearsOfExperience = Math.max(1, s.yearsOfExperience + (Math.floor(Math.random() * 5) - 2));
+            });
 
             try {
                 await axios.post(`${API_BASE_URL}/api/applicants`, {
                     ...profile,
-                    email: `cand_j1_mixed_${i + 1}_${Date.now()}@test.com`,
+                    email: `cand_j1_mixed_${i + 1}_${Date.now()}_${Math.random()}@test.com`,
                     jobId: jobId1
                 });
-                console.log(`✅ SUCCESS: Submitted application ${i + 1}/40 for Job 1 [Name: ${profile.firstName} ${profile.lastName}]`);
+                console.log(`✅ SUCCESS: Submitted application ${i + 1}/80 for Job 1 [Name: ${profile.firstName} ${profile.lastName}]`);
             } catch (err) {
                 console.warn(`Failed application for Job 1 Candidate ${i + 1}`);
             }
@@ -286,12 +292,12 @@ async function runHackathonScenarios() {
 
         // STEP 4: SCREEN APPLICANTS
         log('STEP 4: Screening Applicants for Job 1');
-        await axios.post(`${API_BASE_URL}/api/screening/${jobId1}?limit=20`, {}, { headers: { 'Authorization': `Bearer ${authToken}` } });
-        logSuccess('Screening initiated for Job 1. Waiting for simulation to finish (10s)...');
-        await sleep(10000);
+        await axios.post(`${API_BASE_URL}/api/screening/${jobId1}?limit=40`, {}, { headers: { 'Authorization': `Bearer ${authToken}` } });
+        logSuccess('Screening initiated for Job 1. Waiting for simulation/API to finish (15s)...');
+        await sleep(15000);
 
-        // STEP 4b: TOP 20 TEST
-        log('STEP 4b: TOP 20 LIMIT TEST - Fetching Top 20 Candidates for Job 1');
+        // STEP 4b: TOP 40 TEST
+        log('STEP 4b: TOP 40 LIMIT TEST - Fetching Top 40 Candidates for Job 1');
         const resultsRes1 = await axios.get(`${API_BASE_URL}/api/screening/${jobId1}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
         const screened1 = resultsRes1.data.shortlist || [];
 
@@ -302,7 +308,7 @@ async function runHackathonScenarios() {
             {},
             { headers: { Authorization: `Bearer ${authToken}` } }
         );
-        await sleep(10000);
+        await sleep(15000);
 
         const resultsRes2 = await axios.get(
             `${API_BASE_URL}/api/screening/${jobId2}`,
@@ -315,21 +321,25 @@ async function runHackathonScenarios() {
         console.log('🏆 HACKATHON SCENARIO REPORT 🏆');
         console.log('==================================================');
 
-        console.log(`\n--- JOB 1 (Backend - Screened with Limit 20) ---`);
+        console.log(`\n--- JOB 1 (Backend - Screened with Limit 40) ---`);
         console.log(`Total Screened Candidates Returned: ${screened1.length}`);
         screened1.forEach((r, i) => {
-            console.log(`#${r.rank || i + 1} ID: ${r.applicantId} | Score: ${r.matchScore} | Shortlisted: ${r.shortlisted ? "YES" : "NO"} | Reason for Not Shortlisting: ${r.reasonForNotShortlisting || "N/A"}`);
+            console.log(`\n#${r.rank || i + 1} ID: ${r.applicantId} | Score: ${r.matchScore} | Shortlisted: ${r.shortlisted}`);
+            console.log(`Recommendation: ${r.recommendation}`);
+            console.log(`Relevance:      ${r.relevanceToRole}`);
+            console.log(`Strengths:      ${r.strengths?.join(', ')}`);
+            console.log(`Gaps:           ${r.gaps?.join(', ')}`);
         });
 
         // Verify Job 2 applicants
-        const job2Applicants = await axios.get(`${API_BASE_URL}/api/applicants/job/${jobId2}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
         console.log(`\n--- JOB 2 AI Screening Results ---`);
         console.log(`Total Screened: ${screened2.length}`);
         screened2.forEach((r, i) => {
-            console.log(
-                `#${r.rank || i + 1} ID: ${r.applicantId} | ` +
-                `Score: ${r.matchScore} | ${r.recommendation}`
-            );
+            console.log(`\n#${r.rank || i + 1} ID: ${r.applicantId} | Score: ${r.matchScore} | Shortlisted: ${r.shortlisted}`);
+            console.log(`Recommendation: ${r.recommendation}`);
+            console.log(`Relevance:      ${r.relevanceToRole}`);
+            console.log(`Strengths:      ${r.strengths?.join(', ')}`);
+            console.log(`Gaps:           ${r.gaps?.join(', ')}`);
         });
 
         console.log('\n✅ ALL HACKATHON SCENARIOS TESTED SUCCESSFULLY!');

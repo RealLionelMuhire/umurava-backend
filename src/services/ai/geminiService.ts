@@ -2,51 +2,27 @@
  * @file geminiService.ts
  * @description Interacts with the Google Gemini API for AI-powered screening.
  *
- * PROMPT DESIGN DECISIONS:
- * 1.  **Structured Input**: The prompt provides clear sections for the job and each applicant,
- *     using headings like "Job Details" and "Applicant Profile" to give the model context.
- *
- * 2.  **Explicit Output Format**: The prompt explicitly instructs the model to return ONLY a
- *     valid JSON array. This is critical for reliable parsing. It specifies the exact
- *     fields required for each object in the array: `rank`, `applicantId`, `matchScore`,
- *     `strengths`, `gaps`, `relevanceToRole`, and `recommendation`.
- *
- * 3.  **Constraint-Based Instructions**:
- *     - "Return ONLY a valid JSON array": Prevents the model from adding conversational
- *       text or markdown backticks (e.g., ```json ... ```) around the output.
- *     - "Rank the top X candidates": Limits the output to the most relevant results,
- *       making the response more focused and reducing token usage.
- *     - "Score from 0 to 100": Standardizes the `matchScore` for easy comparison.
- *
- * 4.  **Weighted Scoring Criteria**: The prompt now includes explicit weighting to guide the
- *     model's scoring logic, ensuring consistency and alignment with recruitment priorities.
- *     - Skills Match (40%): The most critical factor.
- *     - Experience (30%): Directly relevant experience is highly valued.
- *     - Education (20%): Educational background provides a foundational check.
- *     - Overall Relevance (10%): A qualitative assessment of the candidate's fit.
- *
- * 5.  **Key Information First**: The job description (the criteria) is placed before the
- *     list of applicants (the candidates to be evaluated against the criteria). This
- *     helps the model establish the evaluation context first.
+ * AI Decision Framework
+ * - Temperature: 0.1 (near-deterministic)
+ * - TopP: 0.8, TopK: 40 (limited token selection)
+ * - All scoring anchored to job requirements
+ * - Relevance gate prevents unrelated profiles scoring above 25
+ * - Post-processing validation corrects any inconsistencies
+ * - Weights: Skills 40%, Experience 30%, Education 20%, Projects 10%
  *
  * KNOWN LIMITATIONS & ASSUMPTIONS:
- * - **Subjectivity**: AI scoring, even with weighting, has inherent subjectivity and may not
- *   perfectly mirror a human recruiter's intuition.
- * - **Data Quality**: The model's output is highly dependent on the quality and completeness
- *   of the applicant data provided (e.g., parsed resume text).
- * - **Prompt Sensitivity**: Minor changes to the prompt structure or wording could lead to
- *   varied or unexpected results.
- * - **No Real-Time Verification**: The model cannot verify claims made in a resume (e.g.,
- *   certifications, past employment). It takes the data at face value.
- * - **Bias Risk**: The model may inadvertently amplify biases present in the training data or
- *   the provided applicant information.
+ * - Subjectivity: AI scoring, even with weighting, has inherent subjectivity and may not perfectly mirror a human recruiter's intuition.
+ * - Data Quality: The model's output is highly dependent on the quality and completeness of the applicant data provided (e.g., parsed resume text).
+ * - Prompt Sensitivity: Minor changes to the prompt structure or wording could lead to varied or unexpected results.
+ * - No Real-Time Verification: The model cannot verify claims made in a resume (e.g., certifications, past employment). It takes the data at face value.
+ * - Bias Risk: The model may inadvertently amplify biases present in the training data or the provided applicant information.
  */
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { IJob } from '../../models/Job';
 import { IApplicant } from '../../models/Applicant';
 
 // Initialize the Google Generative AI client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || 'MISSING_API_KEY');
 
 interface ScreeningResultItem {
   rank: number;
@@ -68,13 +44,94 @@ interface ScreeningResultItem {
  * @returns A formatted string to be used as the prompt.
  */
 export const buildScreeningPrompt = (job: IJob, applicants: IApplicant[], limit: number): string => {
-  const jobDetails = `
-    **Job Details:**
-    - Title: ${job.title}
-    - Description: ${job.description}
-    - Required Skills: ${job.requiredSkills.join(', ')}
-    - Experience Level: ${job.experienceLevel}
-    - Education Level: ${job.educationLevel}
+  const instructions = `
+Evaluate these candidates ONLY against this specific job. Every decision must reference these exact requirements:
+
+JOB TITLE: ${job.title}
+JOB DESCRIPTION: ${job.description}
+REQUIRED SKILLS: ${job.requiredSkills.join(', ')}
+EXPERIENCE LEVEL: ${job.experienceLevel || 'Not specified'}
+LOCATION: ${job.location || 'Not specified'}
+
+Do not use general software engineering standards.
+Only evaluate against what THIS job needs.
+
+STEP 1 - RELEVANCE CHECK (mandatory):
+Required skills for this job: ${job.requiredSkills.join(', ')}
+
+If the candidate has NONE of these skills AND their experience has NO relation to ${job.title}:
+→ matchScore: 0-15
+→ recommendation: 'Not recommended - profile does not match ${job.title} requirements'
+→ shortlisted: false
+→ Stop evaluation, do not score further
+
+Only proceed to scoring if candidate passes this relevance check.
+
+STEP 2 - SCORING (only if passed relevance check):
+
+SKILLS MATCH - 40 points:
+Required: ${job.requiredSkills.join(', ')}
+- Expert/Advanced exact match: full points per skill
+- Intermediate exact match: half points per skill
+- Beginner exact match: quarter points per skill
+- Related but unlisted skill: quarter points
+- Missing required skill: 0 points
+Calculate: (points earned / 40) * 40
+
+EXPERIENCE RELEVANCE - 30 points:
+Job needs: ${job.experienceLevel || 'any level'}
+Role is: ${job.title}
+Description: ${job.description}
+- Direct relevant experience matching description: 25-30 points
+- Partially related experience: 10-20 points  
+- Unrelated experience: 0-5 points
+
+EDUCATION - 20 points:
+- Directly relevant to ${job.title}: 20 points
+- Related field: 10-15 points
+- Unrelated field: 5 points
+- No education info: 5 points
+
+PROJECTS & CERTIFICATIONS - 10 points:
+Uses any of ${job.requiredSkills.join(', ')}?
+- Strong relevant projects + certifications: 10 points
+- Some relevant projects: 5-7 points
+- No relevant projects: 0-3 points
+
+TOTAL = skills + experience + education + projects
+
+NON-NEGOTIABLE RULES:
+- Candidate with ALL required skills (${job.requiredSkills.join(', ')}) MUST score above 75
+- Candidate with NONE of the required skills MUST score below 25
+- Calculate your score twice and average them for consistency
+- Never let enthusiasm override the rubric
+- Never give bonus points not defined above
+
+RECOMMENDATION must exactly match score:
+85-100 → 'Strongly recommend for interview'
+75-84  → 'Recommend for interview'
+60-74  → 'Consider with reservations'
+40-59  → 'Weak match - not recommended'
+0-39   → 'Not recommended - does not meet ${job.title} requirements'
+
+shortlisted = true ONLY if matchScore >= 75
+shortlisted = false if matchScore < 75
+
+Return ONLY a valid JSON array. 
+No markdown. No explanation. No text outside the JSON array. Every candidate in the input MUST appear in the output.
+
+Required fields per candidate:
+{
+  rank: number (1 = best),
+  applicantId: string (exact ID provided),
+  matchScore: integer 0-100,
+  strengths: string[] (max 4, specific to ${job.title} requirements),
+  gaps: string[] (max 3, reference missing skills from ${job.requiredSkills.join(', ')}),
+  relevanceToRole: string (1-2 sentences mentioning ${job.title}),
+  recommendation: string (exact text from scale above),
+  shortlisted: boolean,
+  reasonForNotShortlisting: string | null
+}
   `;
 
   const applicantProfiles = applicants.map(applicant => `
@@ -91,25 +148,42 @@ export const buildScreeningPrompt = (job: IJob, applicants: IApplicant[], limit:
     - Raw Resume Fallback: ${applicant.rawResumeText ? applicant.rawResumeText.substring(0, 500) + '...' : 'N/A'}
   `).join('');
 
-  const instructions = `
-    **Instructions:**
-    Based on the "Job Details" provided, please evaluate the following "Applicant Profiles".
-    Score candidates with this priority: skills match (40%), experience (30%), education (20%), overall relevance (10%).
-    Return ONLY a valid JSON array containing the top ${limit} ranked candidates for this role.
-    Do not include any introductory text, explanations, or markdown formatting.
-    The JSON object for each candidate must have the following structure:
-    {
-      "rank": <number>,
-      "applicantId": "<string>",
-      "matchScore": <number (0-100)>,
-      "strengths": ["<string>", "..."],
-      "gaps": ["<string>", "..."],
-      "relevanceToRole": "<string>",
-      "recommendation": "<string>"
-    }
-  `;
+  return `${instructions}\n\n${applicantProfiles}`;
+};
 
-  return `${jobDetails}\n${applicantProfiles}\n${instructions}`;
+/**
+ * Validates and corrects the screening results returned by the AI.
+ */
+export const validateScreeningResult = (candidates: any[]): ScreeningResultItem[] => {
+  return candidates.map(c => {
+    const score = parseInt(c.matchScore) || 0;
+
+    // Fix recommendation based on score
+    let correctRec;
+    if (score >= 85) correctRec = 'Strongly recommend for interview';
+    else if (score >= 75) correctRec = 'Recommend for interview';
+    else if (score >= 60) correctRec = 'Consider with reservations';
+    else if (score >= 40) correctRec = 'Weak match - not recommended';
+    else correctRec = 'Not recommended - insufficient match';
+
+    // Fix shortlisted based on score
+    const correctShortlisted = score >= 75;
+
+    // Log if correction was needed
+    if (c.recommendation !== correctRec) {
+      console.log(`Corrected recommendation for score ${score}: "${c.recommendation}" -> "${correctRec}"`);
+    }
+
+    return {
+      ...c,
+      matchScore: score,
+      recommendation: correctRec,
+      shortlisted: correctShortlisted,
+      reasonForNotShortlisting: correctShortlisted
+        ? null
+        : `Score ${score} is below 75 threshold`
+    };
+  });
 };
 
 /**
@@ -131,40 +205,50 @@ export const runScreening = async (
   const prompt = buildScreeningPrompt(job, applicants, limit);
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    const result = await model.generateContent(prompt);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      systemInstruction: "You are a strict, deterministic recruitment screening AI. You evaluate candidates ONLY against the specific job provided. You always follow the scoring rubric exactly. You never deviate from the rules. You always return valid JSON only."
+    });
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        topP: 0.8,
+        topK: 40,
+        responseMimeType: "application/json"
+      }
+    });
     const response = await result.response;
     const text = response.text();
 
-    // Attempt to parse the JSON response from the model
     try {
-      const shortlist = JSON.parse(text);
-      return { shortlist };
+      const parsed = JSON.parse(text);
+      const raw = Array.isArray(parsed) ? parsed : [parsed];
+      const mapped = raw.map(item => ({
+        rank: item.rank,
+        applicantId: item.applicantId,
+        matchScore: item.matchScore,
+        strengths: item.strengths || [],
+        gaps: item.gaps || [],
+        relevanceToRole: item.relevanceToRole ||
+          item.relevance_to_role ||
+          item.relevance || '',
+        recommendation: item.recommendation,
+        shortlisted: item.shortlisted,
+        reasonForNotShortlisting: item.reasonForNotShortlisting || null
+      }));
+      const validatedList = validateScreeningResult(mapped);
+      return { shortlist: validatedList.sort((a, b) => b.matchScore - a.matchScore).slice(0, limit).map((item, i) => ({ ...item, rank: i + 1 })) };
     } catch (parseError) {
       console.error('Failed to parse JSON response from Gemini API.');
       console.error('Raw Response:', text);
       throw new Error('Parse error');
     }
-  } catch (apiError) {
-    console.warn('⚠️ Warning: Gemini API failed (likely due to invalid API key). Returning simulated AI data directly.');
-
-    // Simulate AI response for the test to complete
-    const shortlist = applicants.slice(0, limit).map((app, index) => {
-      const matchScore = Math.floor(Math.random() * 40) + 60;
-      return {
-        rank: 0,
-        applicantId: app._id.toString(),
-        matchScore,
-        strengths: ["Strong backend knowledge", "Good communication"],
-        gaps: ["Could use more cloud experience"],
-        relevanceToRole: "High relevance based on past experience",
-        recommendation: "Strongly recommend for interview",
-        shortlisted: matchScore > 75,
-        reasonForNotShortlisting: matchScore <= 75 ? "Score below 75 threshold" : null
-      }
-    }).sort((a, b) => b.matchScore - a.matchScore).map((item, i) => ({ ...item, rank: i + 1 }));
-
-    return { shortlist };
+  } catch (apiError: any) {
+    console.error('❌ CRITICAL ERROR: Gemini API connection or generation failed.', apiError.message || apiError);
+    // Explicitly throwing the error instead of graceful fallback as requested
+    throw apiError;
   }
 };
 
@@ -208,7 +292,12 @@ export const extractResumeData = async (rawText: string): Promise<any | null> =>
 
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); // Use flash for parsing
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
+    });
     const response = await result.response;
     const text = response.text().replace(/^\\s*\`\`\`json/i, '').replace(/\`\`\`\\s*$/, '').trim(); // Strip markdown if present
 
@@ -218,4 +307,3 @@ export const extractResumeData = async (rawText: string): Promise<any | null> =>
     return null;
   }
 };
-

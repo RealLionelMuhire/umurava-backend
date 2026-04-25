@@ -22,7 +22,7 @@ export const runScreeningForJob = async (req: Request, res: Response, next: Next
     }
 
     let limit = parseInt(req.query.limit as string) || 10;
-    if (limit > 20) limit = 20;
+    if (limit <= 0 || isNaN(limit)) limit = 10;
 
     let { shortlist, error } = await runScreening(job, applicants, limit);
     if (shortlist) shortlist = shortlist.slice(0, limit);
