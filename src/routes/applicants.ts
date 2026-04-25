@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { createApplicant, getApplicantsByJob, uploadCsv, createStructuredApplicant } from '../controllers/applicantController';
+import { createApplicant, getApplicantsByJob, uploadCsv, createStructuredApplicant, uploadResume } from '../controllers/applicantController';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router({ mergeParams: true });
@@ -12,6 +12,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/', authMiddleware, getApplicantsByJob);
 router.get('/job/:jobId', authMiddleware, getApplicantsByJob);
 router.get('/:jobId', authMiddleware, getApplicantsByJob);
+router.post('/upload-resume', upload.single('file'), uploadResume);
 router.post('/:jobId/apply', upload.single('resume'), createApplicant);
 router.post('/upload-csv', upload.single('file'), uploadCsv);
 router.post('/', createStructuredApplicant);

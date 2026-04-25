@@ -6,8 +6,8 @@ This is the backend for Umurava, an AI-powered talent screening system designed 
 
 - **JWT Authentication**: Secure endpoints for recruiters.
 - **Job Management**: Full CRUD API for managing job postings with status tracking (`open`, `screening`, `shortlisted`).
-- **Applicant Sourcing**: Upload applicants via CSV/Excel, PDF resumes, direct URL links, or a structured JSON profile.
-- **AI-Powered Screening**: Automated analysis of applicants against job criteria using Google Gemini, with configurable result limits.
+- **Applicant Sourcing**: Upload applicants via CSV/Excel, PDF resumes (with Gemini AI automatic profile extraction), direct URL links, or a structured JSON profile.
+- **AI-Powered Screening**: Automated analysis of applicants against job criteria using Google Gemini, with configurable result limits. Includes intelligent PDF resume parsing to automatically generate structured candidate profiles upon upload.
 - **RESTful API**: A complete set of endpoints to manage the screening lifecycle.
 
 ## How to Run Locally

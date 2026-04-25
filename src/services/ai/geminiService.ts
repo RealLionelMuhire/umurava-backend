@@ -129,7 +129,7 @@ export const runScreening = async (
   }
 
   const prompt = buildScreeningPrompt(job, applicants, limit);
-  
+
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
     const result = await model.generateContent(prompt);
@@ -147,7 +147,7 @@ export const runScreening = async (
     }
   } catch (apiError) {
     console.warn('⚠️ Warning: Gemini API failed (likely due to invalid API key). Returning simulated AI data directly.');
-    
+
     // Simulate AI response for the test to complete
     const shortlist = applicants.slice(0, limit).map((app, index) => {
       const matchScore = Math.floor(Math.random() * 40) + 60;
@@ -167,3 +167,55 @@ export const runScreening = async (
     return { shortlist };
   }
 };
+
+/**
+ * Extracts structured data from raw resume text using the Gemini API.
+ * @param rawText The extracted raw text from the resume PDF.
+ * @returns Parsed JSON containing skills, experience, education, and basic details.
+ */
+export const extractResumeData = async (rawText: string): Promise<any | null> => {
+  if (!process.env.GEMINI_API_KEY) {
+    console.warn('GEMINI_API_KEY is not configured for extractResumeData.');
+    return null;
+  }
+
+  const prompt = `
+    **Instructions:**
+    Extract structured data from the following resume text.
+    Return ONLY a valid JSON object. Do not include markdown formatting or conversational text.
+    If a field is missing, omit it or use an empty array.
+    
+    The JSON object must have this structure:
+    {
+      "firstName": "<string>",
+      "lastName": "<string>",
+      "headline": "<string>",
+      "location": "<string>",
+      "skills": [
+        { "name": "<string>", "level": "Beginner|Intermediate|Advanced|Expert", "yearsOfExperience": <number> }
+      ],
+      "experience": [
+        { "company": "<string>", "role": "<string>", "startDate": "<string YYYY-MM-DD>", "endDate": "<string YYYY-MM-DD or Present>", "description": "<string>", "technologies": ["<string>"], "isCurrent": <boolean> }
+      ],
+      "education": [
+        { "institution": "<string>", "degree": "<string>", "fieldOfStudy": "<string>", "startYear": <number>, "endYear": <number> }
+      ]
+    }
+
+    **Resume Text:**
+    ${rawText.substring(0, 10000)} // truncate to prevent token overflow if extremely long
+  `;
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); // Use flash for parsing
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().replace(/^\\s*\`\`\`json/i, '').replace(/\`\`\`\\s*$/, '').trim(); // Strip markdown if present
+
+    return JSON.parse(text);
+  } catch (error) {
+    console.error('Failed to extract/parse resume data with Gemini:', error);
+    return null;
+  }
+};
+

@@ -4,6 +4,7 @@ import { Job } from '../models/Job';
 import pdf from 'pdf-parse';
 import axios from 'axios';
 import { z } from 'zod';
+import { extractResumeData } from '../services/ai/geminiService';
 
 // Zod schema for validating the application input
 const applicantSchema = z.object({
@@ -165,6 +166,66 @@ export const uploadCsv = async (req: Request, res: Response, next: NextFunction)
     next(error);
   }
 };
+
+export const uploadResume = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { jobId, fullName, email } = req.body;
+    if (!jobId || !fullName || !req.file) {
+      return res.status(400).json({ message: 'jobId, fullName, and file are required' });
+    }
+
+    const data = await pdf(req.file.buffer);
+    const rawResumeText = data.text;
+
+    const nameParts = fullName.split(' ');
+    let firstName = nameParts[0];
+    let lastName = nameParts.slice(1).join(' ') || 'User';
+
+    // Default placeholders
+    let headline = 'PDF Upload Candidate';
+    let location = 'Remote';
+    let skills = [{ name: 'General', level: 'Beginner', yearsOfExperience: 1 }];
+    let experience = [{ company: 'Unknown', role: 'Candidate', startDate: '2020-01-01', endDate: '2023-01-01', description: 'Uploaded Profile', technologies: [], isCurrent: false }];
+    let education = [{ institution: 'Unknown', degree: 'Unknown', fieldOfStudy: 'Unknown', startYear: 2015, endYear: 2019 }];
+    let projects = [{ name: 'Unknown', description: 'Uploaded Profile', technologies: [], role: 'Candidate', startDate: '2020-01-01', endDate: '2021-01-01' }];
+
+    // Attempt to extract structured data via Gemini
+    const aiData = await extractResumeData(rawResumeText);
+    if (aiData) {
+      if (aiData.firstName) firstName = aiData.firstName;
+      if (aiData.lastName) lastName = aiData.lastName;
+      if (aiData.headline) headline = aiData.headline;
+      if (aiData.location) location = aiData.location;
+      if (aiData.skills && aiData.skills.length > 0) skills = aiData.skills;
+      if (aiData.experience && aiData.experience.length > 0) experience = aiData.experience;
+      if (aiData.education && aiData.education.length > 0) education = aiData.education;
+    }
+
+    const newApplicant = new Applicant({
+      firstName,
+      lastName,
+      email: email || 'uploaded@example.com',
+      headline,
+      location,
+      skills,
+      experience,
+      education,
+      projects,
+      availability: { status: 'Available', type: 'Full-time' },
+      jobId,
+      rawResumeText,
+      resumeUrl: `uploads/${req.file.originalname}`,
+      source: 'external',
+      status: 'applied',
+    });
+
+    await newApplicant.save();
+    res.status(201).json({ message: 'Resume uploaded successfully', applicant: newApplicant });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 export const createStructuredApplicant = async (req: Request, res: Response, next: NextFunction) => {
   try {

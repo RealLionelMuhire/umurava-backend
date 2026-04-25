@@ -161,7 +161,7 @@ Uploads a batch of applicants from a CSV or Excel file.
 
 ### `POST /api/applicants/upload-resume` 🌐 Public
 
-Uploads a single applicant from a PDF resume file.
+Uploads a single applicant from a PDF resume file. The system will automatically use Gemini AI to parse the PDF content and extract structured data (e.g., skills, experience, education, headline). If the AI extraction fails, it gracefully falls back to placeholders.
 
 -   **Request Type**: `multipart/form-data`
 -   **Form Fields**:
@@ -169,7 +169,7 @@ Uploads a single applicant from a PDF resume file.
     -   `jobId`: The ID of the job.
     -   `fullName`: The applicant's full name.
     -   `email`: The applicant's email.
--   **Response (201 Created)**: Returns the newly created applicant object.
+-   **Response (201 Created)**: Returns the newly created applicant object containing the extracted profile.
 
 ### `POST /api/applicants/upload-resume-link` 🌐 Public
 
