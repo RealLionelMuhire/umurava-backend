@@ -109,7 +109,7 @@ RECOMMENDATION must exactly match score:
 75-84  → 'Recommend for interview'
 60-74  → 'Consider with reservations'
 40-59  → 'Weak match - not recommended'
-0-39   → 'Not recommended - does not meet ${job.title} requirements'
+0-39   → 'Not recommended - insufficient match'
 
 shortlisted = true ONLY if matchScore >= 75
 shortlisted = false if matchScore < 75
@@ -213,10 +213,7 @@ export const validateScreeningResult = (candidates: any[]): ScreeningResultItem[
     // Fix shortlisted based on score
     const correctShortlisted = score >= 75;
 
-    // Log if correction was needed
-    if (c.recommendation !== correctRec) {
-      console.log(`Corrected recommendation for score ${score}: "${c.recommendation}" -> "${correctRec}"`);
-    }
+    // Silently correct mismatched recommendations (happens when Gemini uses job-specific phrasing)
 
     return {
       ...c,
@@ -246,9 +243,7 @@ export const runScreening = async (
     throw new Error('GEMINI_API_KEY is not configured.');
   }
 
-  console.log('--- DIAGNOSTIC GEMINI_API_KEY LOG ---');
-  console.log('Length:', process.env.GEMINI_API_KEY.length);
-  console.log('String: "' + process.env.GEMINI_API_KEY + '"');
+  console.log(`[Screening] API key configured (length ${process.env.GEMINI_API_KEY.length}). Starting screening for job: ${(job as any).title || job._id}`);
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -261,7 +256,7 @@ export const runScreening = async (
       const prompt = buildScreeningPrompt(job, chunk, CHUNK_SIZE);
 
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.5-flash-lite',
         systemInstruction: 'You are a strict, deterministic recruitment screening AI. You evaluate candidates ONLY against the specific job provided. You always follow the scoring rubric exactly. You never deviate from the rules. You always return valid JSON only.'
       });
 
@@ -290,8 +285,9 @@ export const runScreening = async (
         }));
       };
 
-      // Retry up to 3 times with exponential backoff for API errors + parse errors
-      const MAX_ATTEMPTS = 3;
+      // Retry up to 5 times with exponential backoff — handles sustained 503 throttling
+      const MAX_ATTEMPTS = 5;
+      const BACKOFFS_MS = [15000, 30000, 60000, 120000, 120000]; // 15s, 30s, 1m, 2m, 2m
       let lastError: any;
       let chunkMapped: any[] | null = null;
 
@@ -318,7 +314,7 @@ export const runScreening = async (
           break; // success — exit retry loop
         } catch (err: any) {
           lastError = err;
-          const backoff = attempt * 5000;
+          const backoff = BACKOFFS_MS[attempt - 1];
           console.warn(`⚠️ Chunk ${Math.floor(i / CHUNK_SIZE)} attempt ${attempt}/${MAX_ATTEMPTS} failed: ${err.message}. Retrying in ${backoff / 1000}s...`);
           if (attempt < MAX_ATTEMPTS) {
             await new Promise(resolve => setTimeout(resolve, backoff));
@@ -332,9 +328,10 @@ export const runScreening = async (
 
       allMapped.push(...chunkMapped);
 
-      // Delay between chunks to respect free-tier rate limits
+      // Delay between chunks — 8s reduces 503 throttle frequency on free-tier
+      // (each avoided 503 saves 5s retry, so 8s up-front is net faster)
       if (i + CHUNK_SIZE < applicants.length) {
-        await new Promise(resolve => setTimeout(resolve, 4000));
+        await new Promise(resolve => setTimeout(resolve, 8000));
       }
     }
 
