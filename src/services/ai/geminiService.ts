@@ -131,22 +131,69 @@ Required fields per candidate:
 }
   `;
 
-  const applicantProfiles = applicants.map(applicant => `
-    **Applicant Profile:**
-    - ID: ${applicant._id}
-    - Name: ${applicant.firstName} ${applicant.lastName}
-    - Headline: ${applicant.headline}
-    - Location: ${applicant.location}
-    - Skills: ${applicant.skills?.map(s => `${s.name} (${s.level}, ${s.yearsOfExperience}y)`).join('; ') || ''}
-    - Experience: ${applicant.experience?.map(e => `${e.role} at ${e.company} (${e.startDate} to ${e.endDate}). Description: ${e.description}. Tech: ${e.technologies?.join(', ') || ''}`).join(' | ') || ''}
-    - Education: ${applicant.education?.map(edu => `${edu.degree} in ${edu.fieldOfStudy} at ${edu.institution} (${edu.startYear}-${edu.endYear})`).join(' | ') || ''}
-    - Certifications: ${applicant.certifications?.map(c => `${c.name} by ${c.issuer}`).join(' | ') || 'None'}
-    - Projects (Tech): ${applicant.projects?.map(p => `${p.name} - ${p.technologies?.join(', ') || ''}`).join(' | ') || 'None'}
-    - Raw Resume Fallback: ${applicant.rawResumeText ? applicant.rawResumeText.substring(0, 500) + '...' : 'N/A'}
-  `).join('');
+  const applicantProfiles = applicants.map(applicant => {
+    const skills = applicant.skills?.map(s => `${s.name}(${s.level},${s.yearsOfExperience}y)`).join(';') || 'None';
+    const experience = applicant.experience?.map(e =>
+      `${e.role}@${e.company}(${e.startDate}–${e.endDate}): ${(e.description || '').slice(0, 80)}. Tech:${e.technologies?.join(',') || ''}`
+    ).join(' | ') || 'None';
+    const education = applicant.education?.map(edu =>
+      `${edu.degree} ${edu.fieldOfStudy}@${edu.institution}(${edu.startYear}-${edu.endYear})`
+    ).join(' | ') || 'None';
+    const certs = applicant.certifications?.map(c => `${c.name} by ${c.issuer}`).join(';') || 'None';
+    const projects = applicant.projects?.map(p => `${p.name}[${p.technologies?.join(',') || ''}]`).join(';') || 'None';
+    return `**Profile ID:${applicant._id}**\nName:${applicant.firstName} ${applicant.lastName}|Headline:${applicant.headline}|Location:${applicant.location}\nSkills:${skills}\nExp:${experience}\nEdu:${education}\nCerts:${certs}\nProjects:${projects}\n`;
+  }).join('\n');
 
   return `${instructions}\n\n${applicantProfiles}`;
 };
+
+/**
+ * Sanitizes a raw string from Gemini and attempts to parse it as JSON.
+ * Handles: markdown fences, JS-style comments, trailing commas, truncated arrays.
+ */
+function sanitizeAndParseJSON(raw: string): any {
+  let s = raw.trim();
+
+  // Strip markdown code fences
+  if (s.startsWith('```json')) s = s.slice(7);
+  else if (s.startsWith('```')) s = s.slice(3);
+  if (s.endsWith('```')) s = s.slice(0, -3);
+  s = s.trim();
+
+  // Remove single-line JS comments (// ...)
+  s = s.replace(/\/\/[^\n]*/g, '');
+
+  // Remove multi-line JS comments (/* ... */)
+  s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Fix trailing commas before } or ]
+  s = s.replace(/,\s*([\]}])/g, '$1');
+
+  // Try parsing as-is first
+  try {
+    return JSON.parse(s);
+  } catch (_) {
+    // If truncated, try to recover the largest valid array prefix
+    const arrayStart = s.indexOf('[');
+    if (arrayStart !== -1) {
+      // Walk backwards from end to find a recoverable closing bracket
+      for (let end = s.length - 1; end > arrayStart; end--) {
+        const candidate = s.slice(arrayStart, end + 1);
+        // Make sure the last complete object is closed
+        const lastClose = candidate.lastIndexOf('}');
+        if (lastClose === -1) continue;
+        const truncated = candidate.slice(0, lastClose + 1).trimEnd().replace(/,\s*$/, '') + ']';
+        try {
+          return JSON.parse(truncated);
+        } catch (_) {
+          continue;
+        }
+      }
+    }
+    // Re-throw the original error if nothing worked
+    throw new SyntaxError(`Could not recover JSON from Gemini response. First 200 chars: ${s.slice(0, 200)}`);
+  }
+}
 
 /**
  * Validates and corrects the screening results returned by the AI.
@@ -205,57 +252,94 @@ export const runScreening = async (
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-  const prompt = buildScreeningPrompt(job, applicants, limit);
+  const CHUNK_SIZE = 2;
+  const allMapped: any[] = [];
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: "You are a strict, deterministic recruitment screening AI. You evaluate candidates ONLY against the specific job provided. You always follow the scoring rubric exactly. You never deviate from the rules. You always return valid JSON only."
-    });
+    for (let i = 0; i < applicants.length; i += CHUNK_SIZE) {
+      const chunk = applicants.slice(i, i + CHUNK_SIZE);
+      const prompt = buildScreeningPrompt(job, chunk, CHUNK_SIZE);
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        systemInstruction: 'You are a strict, deterministic recruitment screening AI. You evaluate candidates ONLY against the specific job provided. You always follow the scoring rubric exactly. You never deviate from the rules. You always return valid JSON only.'
+      });
+
+      const generationConfig: any = {
         temperature: 0.1,
         topP: 0.8,
         topK: 40,
         maxOutputTokens: 8192,
-        responseMimeType: "application/json"
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 }  // Disable thinking tokens — they consume output budget on gemini-2.5-flash
+      };
+
+      const parseChunkText = (rawText: string) => {
+        const parsed = sanitizeAndParseJSON(rawText);
+        const raw = Array.isArray(parsed) ? parsed : [parsed];
+        return raw.map((item: any) => ({
+          rank: item.rank,
+          applicantId: item.applicantId,
+          matchScore: item.matchScore,
+          strengths: item.strengths || [],
+          gaps: item.gaps || [],
+          relevanceToRole: item.relevanceToRole || item.relevance_to_role || item.relevance || '',
+          recommendation: item.recommendation,
+          shortlisted: item.shortlisted,
+          reasonForNotShortlisting: item.reasonForNotShortlisting || null
+        }));
+      };
+
+      // Retry up to 3 times with exponential backoff for API errors + parse errors
+      const MAX_ATTEMPTS = 3;
+      let lastError: any;
+      let chunkMapped: any[] | null = null;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          const result = await model.generateContent({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig
+          });
+          const response = result.response;
+
+          const candidate = response.candidates?.[0];
+          const finishReason = candidate?.finishReason;
+          if (finishReason && finishReason !== 'STOP') {
+            throw new Error(`Gemini blocked (finishReason: ${finishReason})`);
+          }
+
+          const text = response.text();
+          if (!text || text.trim() === '') {
+            throw new Error('Gemini returned empty response');
+          }
+
+          chunkMapped = parseChunkText(text);
+          break; // success — exit retry loop
+        } catch (err: any) {
+          lastError = err;
+          const backoff = attempt * 5000;
+          console.warn(`⚠️ Chunk ${Math.floor(i / CHUNK_SIZE)} attempt ${attempt}/${MAX_ATTEMPTS} failed: ${err.message}. Retrying in ${backoff / 1000}s...`);
+          if (attempt < MAX_ATTEMPTS) {
+            await new Promise(resolve => setTimeout(resolve, backoff));
+          }
+        }
       }
-    });
-    const response = await result.response;
-    const text = response.text();
 
-    try {
-      let jsonString = text.trim();
-      if (jsonString.startsWith('```json')) jsonString = jsonString.slice(7);
-      if (jsonString.startsWith('```')) jsonString = jsonString.slice(3);
-      if (jsonString.endsWith('```')) jsonString = jsonString.slice(0, -3);
-      jsonString = jsonString.trim();
+      if (!chunkMapped) {
+        throw new Error(`Chunk ${Math.floor(i / CHUNK_SIZE)} failed after ${MAX_ATTEMPTS} attempts: ${lastError?.message}`);
+      }
 
-      const parsed = JSON.parse(jsonString);
-      const raw = Array.isArray(parsed) ? parsed : [parsed];
-      const mapped = raw.map(item => ({
-        rank: item.rank,
-        applicantId: item.applicantId,
-        matchScore: item.matchScore,
-        strengths: item.strengths || [],
-        gaps: item.gaps || [],
-        relevanceToRole: item.relevanceToRole ||
-          item.relevance_to_role ||
-          item.relevance || '',
-        recommendation: item.recommendation,
-        shortlisted: item.shortlisted,
-        reasonForNotShortlisting: item.reasonForNotShortlisting || null
-      }));
+      allMapped.push(...chunkMapped);
 
-      const validatedList = validateScreeningResult(mapped);
-      return { shortlist: validatedList.sort((a, b) => b.matchScore - a.matchScore).slice(0, limit).map((item, i) => ({ ...item, rank: i + 1 })) };
-    } catch (parseError: any) {
-      console.error('❌ Parse error! Raw Response from Gemini:', text);
-      console.error('Inner Exception:', parseError.message);
-      throw new Error(`Parse error: ${parseError.message}`);
+      // Delay between chunks to respect free-tier rate limits
+      if (i + CHUNK_SIZE < applicants.length) {
+        await new Promise(resolve => setTimeout(resolve, 4000));
+      }
     }
+
+    const validatedList = validateScreeningResult(allMapped);
+    return { shortlist: validatedList.sort((a, b) => b.matchScore - a.matchScore).slice(0, limit).map((item, i) => ({ ...item, rank: i + 1 })) };
   } catch (apiError: any) {
     console.error('❌ CRITICAL ERROR: Gemini API connection or generation failed.', apiError.message || apiError);
     // Explicitly throwing the error instead of graceful fallback as requested
@@ -303,7 +387,7 @@ export const extractResumeData = async (rawText: string): Promise<any | null> =>
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }); // Use flash for parsing
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {

@@ -175,11 +175,17 @@ async function runHackathonScenarios() {
         for (let i = 0; i < 80; i++) {
             const profile = JSON.parse(JSON.stringify(job1Profiles[i % job1Profiles.length]));
             profile.firstName = profile.firstName + `_Gen${i}`;
-            // Add some randomness to test AI hallucination explicitly
-            if (i % 4 === 0 && profile.skills.length > 0) profile.skills.pop(); // drop a skill
+            // Add randomness to prevent Gemini duplicate inference loops and safety trigger halts
+            if (i % 4 === 0 && profile.skills.length > 0) profile.skills.pop();
             profile.skills.forEach(s => {
                 s.yearsOfExperience = Math.max(1, s.yearsOfExperience + (Math.floor(Math.random() * 5) - 2));
             });
+            if (profile.experience && profile.experience.length) {
+                profile.experience[0].description += ` Instance ${i}-${Math.random().toString(36).substring(7)}`;
+            }
+            if (profile.projects && profile.projects.length) {
+                profile.projects[0].description += ` Variant ${i}-${Math.random().toString(36).substring(7)}`;
+            }
 
             try {
                 await axios.post(`${API_BASE_URL}/api/applicants`, {
